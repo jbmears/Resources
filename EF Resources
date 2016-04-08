@@ -1,0 +1,136 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using BusinessObjects;
+using BusinessObjects.Constants;
+using DataAccess.Contexts;
+using System.Data.Entity;
+using BusinessObjects.Structs;
+using System.Data.SqlClient;
+using System.Reflection;
+using System.Collections;
+
+namespace DataAccess
+{
+    public class AppDataAccess
+    {
+
+
+        /// <summary>
+        /// Save the range of items to the database
+        /// </summary>
+        /// <typeparam name="IEnumerable"></typeparam>
+        /// <param name="items"></param>
+        protected void SaveRange<TType>(IEnumerable<TType> items)
+        where TType : class
+        {
+            var thisType = typeof(TType);
+
+            // Get the once, then pass them in for each item so we aren't doing reflection each time.
+            var enumerableType = typeof(ICollection);
+            var baseDataType = typeof(BaseDataObject);
+            IEnumerable<PropertyInfo> allprops = thisType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            IEnumerable<PropertyInfo> dataProps = allprops.Where(p => baseDataType.IsAssignableFrom(p.PropertyType) || enumerableType.IsAssignableFrom(p.PropertyType));
+            PropertyInfo keyProp = allprops.FirstOrDefault(f => f.Name.Equals(thisType.Name + "ID", StringComparison.OrdinalIgnoreCase));// thisType.Name + "ID", BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var item in items)
+            {
+                Save(item, dataProps, keyProp);
+            }
+        }
+
+        /// <summary>
+        /// Add or update the entity object.
+        /// Will clean out all child objects
+        /// </summary>
+        /// <typeparam name="TType"></typeparam>
+        /// <param name="item"></param>
+        protected TType Save<TType>(TType item)
+        where TType : class
+        {
+            var thisType = typeof(TType);
+            // Get the properties to clear
+            var enumerableType = typeof(ICollection);
+            var baseDataType = typeof(BaseDataObject);
+            IEnumerable<PropertyInfo> allprops = thisType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            IEnumerable<PropertyInfo> dataProps = allprops.Where(p => baseDataType.IsAssignableFrom(p.PropertyType) || enumerableType.IsAssignableFrom(p.PropertyType));
+            PropertyInfo keyProp = allprops.FirstOrDefault(f => f.Name.Equals(thisType.Name + "ID", StringComparison.OrdinalIgnoreCase));// thisType.Name + "ID", BindingFlags.Public | BindingFlags.Instance);
+
+            return Save(item, dataProps, keyProp);
+        }
+
+        /// <summary>
+        /// Add or update the entity object. 
+        /// WIll clean out all child boejcts
+        /// </summary>
+        /// <typeparam name="TType"></typeparam>
+        /// <param name="item"></param>
+        /// <param name="dataProps"></param>
+        /// <param name="keyProp"></param>
+        /// <returns></returns>
+        protected TType Save<TType>(TType item, IEnumerable<PropertyInfo> dataProps, PropertyInfo keyProp)
+        where TType : class
+        {
+            // Retain the properties and clear them as possible.
+            var retained = new Dictionary<string, object>();
+            foreach (var prop in dataProps)
+            {
+                retained.Add(prop.Name, prop.GetValue(item, null));
+                prop.SetValue(item, null, null);
+            }
+
+            if (keyProp == null)
+            {
+                throw new InvalidOperationException("Data object is not configured with standard primary key.");
+            }
+
+            int key = (int)keyProp.GetValue(item, null);
+
+            // Save the item
+            using (var context = new CMSContext())
+            {
+                if (key <= 0)
+                {
+                    context.Set<TType>().Add(item);
+                }
+                else
+                {
+                    var entry = context.Entry(item);
+                    entry.State = EntityState.Modified;
+                }
+                context.SaveChanges();
+            }
+
+            // Set the property values
+            foreach (var prop in dataProps)
+            {
+                prop.SetValue(item, retained[prop.Name], null);
+            }
+
+            return item;
+        }
+
+        /// <summary>
+        /// Delete the entity item
+        /// </summary>
+        /// <typeparam name="TType"></typeparam>
+        /// <param name="item"></param>
+        /// <returns></returns>
+        protected bool Delete<TType>(TType item)
+        where TType : class
+        {
+            using (var context = new CMSContext())
+            {
+                var entry = context.Entry(item);
+                if (entry != null)
+                {
+                    entry.State = EntityState.Deleted;
+                    context.SaveChanges();
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+}
